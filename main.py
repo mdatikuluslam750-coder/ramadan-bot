@@ -1,42 +1,88 @@
-import telebot
 import os
-from flask import Flask
+import pytz
+import datetime
+import requests
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, CallbackQueryHandler, filters, CommandHandler
 
-# ১. এখানে আপনার আসল টোকেনটি খুব সাবধানে বসান (কোলন যেন থাকে)
-API_TOKEN = 'আপনার_বট_টোকেন_এখানে_দিন' 
+# টোকেন সরাসরি এখানে দিন (Render-এ সমস্যা হলে সরাসরি দেওয়া ভালো)
+TOKEN = "আপনার_বট_টোকেন_এখানে_দিন"
 
-bot = telebot.TeleBot(API_TOKEN)
-server = Flask(__name__)
-
-# রমজানের ডাটা (উদাহরণস্বরূপ ঢাকা)
-ramadan_times = {
-    "dhaka": {"sehri": "05:02 AM", "iftar": "06:05 PM"},
-    "rajshahi": {"sehri": "05:08 AM", "iftar": "06:11 PM"}
+# ৬৪ জেলার তালিকা
+districts = {
+    "ঢাকা": "Dhaka", "চট্টগ্রাম": "Chittagong", "রাজশাহী": "Rajshahi", "খুলনা": "Khulna", 
+    "সিলেট": "Sylhet", "বরিশাল": "Barisal", "রংপুর": "Rangpur", "ময়মনসিংহ": "Mymensingh",
+    "কুমিল্লা": "Comilla", "ফেনী": "Feni", "ব্রাহ্মণবাড়িয়া": "Brahmanbaria", "নোয়াখালী": "Noakhali",
+    "চাঁদপুর": "Chandpur", "লক্ষ্মীপুর": "Lakshmipur", "কক্সবাজার": "Cox's Bazar", "খাগড়াছড়ি": "Khagrachhari",
+    "রাঙ্গামাটি": "Rangamati", "বান্দরবান": "Bandarban", "সিরাজগঞ্জ": "Sirajganj", "পাবনা": "Pabna",
+    "বগুড়া": "Bogra", "নাটোর": "Natore", "জয়পুরহাট": "Joypurhat", "চাঁপাইনবাবগঞ্জ": "Chapainawabganj",
+    "নওগাঁ": "Naogaon", "যশোর": "Jessore", "সাতক্ষীরা": "Satkhira", "মেহেরপুর": "Meherpur",
+    "নড়াইল": "Narail", "চুয়াডাঙ্গা": "Chuadanga", "কুষ্টিয়া": "Kushtia", "মাগুরা": "Magura",
+    "বাগেরহাট": "Bagerhat", "ঝিনাইদহ": "Jhenaidah", "ঝালকাঠি": "Jhalokati", "পটুয়াখালী": "Patuakhali",
+    "পিরোজপুর": "Pirojpur", "ভোলা": "Bhola", "বরগুনা": "Barguna", "পঞ্চগড়": "Panchagarh",
+    "দিনাজপুর": "Dinajpur", "লালমনিরহাট": "Lalmonirhat", "নীলফামারী": "Nilphamari", "কুড়িগ্রাম": "Kurigram",
+    "ঠাকুরগাঁও": "Thakurgaon", "গাইবান্ধা": "Gaibandha", "শেরপুর": "Sherpur", "জামালপুর": "Jamalpur",
+    "নেত্রকোনা": "Netrokona", "কিশোরগঞ্জ": "Kishoreganj", "সুনামগঞ্জ": "Sunamganj", "হবিগঞ্জ": "Habiganj",
+    "মৌলভীবাজার": "Moulvibazar", "গোপালগঞ্জ": "Gopalganj", "মাদারীপুর": "Madaripur", "শরীয়তপুর": "Shariatpur",
+    "রাজবাড়ী": "Rajbari", "ফরিদপুর": "Faridpur", "টাঙ্গাইল": "Tangail", "মানিকগঞ্জ": "Manikganj",
+    "মুন্সীগঞ্জ": "Munshiganj", "নরসিংদী": "Narsingdi", "নারায়ণগঞ্জ": "Narayanganj", "গাজীপুর": "Gazipur"
 }
 
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.reply_to(message, "✨ আসসালামু আলাইকুম!\nইফতার ও সেহরির সময় জানতে জেলার নাম ইংরেজিতে লিখুন (যেমন: Dhaka)")
+def get_buttons():
+    buttons = []
+    temp = []
+    for d in districts.keys():
+        temp.append(InlineKeyboardButton(d, callback_data=d))
+        if len(temp) == 3: # প্রতি লাইনে ৩টি করে জেলা দেখাবে
+            buttons.append(temp)
+            temp = []
+    if temp: buttons.append(temp)
+    return buttons
 
-@bot.message_handler(func=lambda msg: True)
-def handle_message(message):
-    text = message.text.lower().strip()
-    if text in ramadan_times:
-        time = ramadan_times[text]
-        bot.reply_to(message, f"📍 {text.capitalize()}\n🌅 সেহরি: {time['sehri']}\n🌇 ইফতার: {time['iftar']}")
+def get_times(city):
+    try:
+        url = f"https://api.aladhan.com/v1/timingsByCity?city={city}&country=Bangladesh&method=1"
+        r = requests.get(url).json()
+        fajr = r["data"]["timings"]["Fajr"]
+        maghrib = r["data"]["timings"]["Maghrib"]
+        return fajr, maghrib
+    except:
+        return "N/A", "N/A"
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = InlineKeyboardMarkup(get_buttons())
+    await update.message.reply_text("🌙 আসসালামু আলাইকুম! রমজানের সময়সূচী জানতে আপনার জেলা বেছে নিন:", reply_markup=kb)
+
+async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    district = query.data
+    city = districts[district]
+    fajr, maghrib = get_times(city)
+    tz = pytz.timezone("Asia/Dhaka")
+    today = datetime.datetime.now(tz).strftime("%d-%m-%Y")
+    
+    msg = f"📍 জেলা: {district}\n📅 তারিখ: {today}\n\n🌙 সেহরির শেষ সময়: {fajr}\n🍽️ ইফতার সময়: {maghrib}\n\nউৎপাদক: @Md_atiqul_islam0"
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(get_buttons()))
+
+async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text in districts:
+        city = districts[text]
+        fajr, maghrib = get_times(city)
+        tz = pytz.timezone("Asia/Dhaka")
+        today = datetime.datetime.now(tz).strftime("%d-%m-%Y")
+        msg = f"📍 জেলা: {text}\n📅 তারিখ: {today}\n\n🌙 সেহরির শেষ সময়: {fajr}\n🍽️ ইফতার সময়: {maghrib}\n\nউৎপাদক: @Md_atiqul_islam0"
+        await update.message.reply_text(msg)
     else:
-        bot.reply_to(message, "⚠️ দুঃখিত, জেলাটি পাওয়া যায়নি। সঠিক বানান লিখুন (যেমন: Dhaka)।")
+        await update.message.reply_text("⚠️ জেলাটি তালিকায় নেই। নিচের বাটন থেকে জেলা বেছে নিন।")
 
-@server.route('/' + API_TOKEN, methods=['POST'])
-def getMessage():
-    bot.process_new_updates([telebot.types.Update.de_json(request.stream.read().decode("utf-8"))])
-    return "!", 200
-
-# পোলিং মেথড (আপনার জন্য এটি সবচেয়ে সহজ হবে)
 if __name__ == "__main__":
-    print("বট সচল হচ্ছে...")
-    bot.remove_webhook()
-    bot.infinity_polling(skip_pending=True)
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button_click))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
     
-    
+    print("Bot is running...")
+    application.run_polling()
     
