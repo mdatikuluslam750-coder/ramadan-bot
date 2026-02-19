@@ -5,10 +5,9 @@ import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, CallbackQueryHandler, filters, CommandHandler
 
-# টোকেন সরাসরি এখানে দিন (Render-এ সমস্যা হলে সরাসরি দেওয়া ভালো)
-TOKEN = "আপনার_বট_টোকেন_এখানে_দিন"
+# আপনার দেওয়া নতুন টোকেন
+TOKEN = "8331922661:AAHsxItKbrKIKKv_bpdOqtgmClGLx2H02uw"
 
-# ৬৪ জেলার তালিকা
 districts = {
     "ঢাকা": "Dhaka", "চট্টগ্রাম": "Chittagong", "রাজশাহী": "Rajshahi", "খুলনা": "Khulna", 
     "সিলেট": "Sylhet", "বরিশাল": "Barisal", "রংপুর": "Rangpur", "ময়মনসিংহ": "Mymensingh",
@@ -30,59 +29,49 @@ districts = {
 
 def get_buttons():
     buttons = []
-    temp = []
-    for d in districts.keys():
-        temp.append(InlineKeyboardButton(d, callback_data=d))
-        if len(temp) == 3: # প্রতি লাইনে ৩টি করে জেলা দেখাবে
-            buttons.append(temp)
-            temp = []
-    if temp: buttons.append(temp)
+    keys = list(districts.keys())
+    for i in range(0, len(keys), 3):
+        row = [InlineKeyboardButton(keys[j], callback_data=keys[j]) for j in range(i, min(i+3, len(keys)))]
+        buttons.append(row)
     return buttons
 
 def get_times(city):
     try:
         url = f"https://api.aladhan.com/v1/timingsByCity?city={city}&country=Bangladesh&method=1"
         r = requests.get(url).json()
-        fajr = r["data"]["timings"]["Fajr"]
-        maghrib = r["data"]["timings"]["Maghrib"]
-        return fajr, maghrib
+        return r["data"]["timings"]["Fajr"], r["data"]["timings"]["Maghrib"]
     except:
         return "N/A", "N/A"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup(get_buttons())
-    await update.message.reply_text("🌙 আসসালামু আলাইকুম! রমজানের সময়সূচী জানতে আপনার জেলা বেছে নিন:", reply_markup=kb)
+    await update.message.reply_text("🌙 আসসালামু আলাইকুম! ইফতার ও সেহরির সময় জানতে আপনার জেলা বেছে নিন:", reply_markup=kb)
 
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     district = query.data
-    city = districts[district]
-    fajr, maghrib = get_times(city)
+    fajr, maghrib = get_times(districts[district])
     tz = pytz.timezone("Asia/Dhaka")
     today = datetime.datetime.now(tz).strftime("%d-%m-%Y")
-    
-    msg = f"📍 জেলা: {district}\n📅 তারিখ: {today}\n\n🌙 সেহরির শেষ সময়: {fajr}\n🍽️ ইফতার সময়: {maghrib}\n\nউৎপাদক: @Md_atiqul_islam0"
+    msg = f"📍 জেলা: {district}\n📅 তারিখ: {today}\n\n🌅 সেহরির শেষ সময়: {fajr}\n🌇 ইফতার সময়: {maghrib}\n\nউৎপাদক: @Md_atiqul_islam0"
     await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(get_buttons()))
 
 async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text in districts:
-        city = districts[text]
-        fajr, maghrib = get_times(city)
+        fajr, maghrib = get_times(districts[text])
         tz = pytz.timezone("Asia/Dhaka")
         today = datetime.datetime.now(tz).strftime("%d-%m-%Y")
-        msg = f"📍 জেলা: {text}\n📅 তারিখ: {today}\n\n🌙 সেহরির শেষ সময়: {fajr}\n🍽️ ইফতার সময়: {maghrib}\n\nউৎপাদক: @Md_atiqul_islam0"
-        await update.message.reply_text(msg)
+        await update.message.reply_text(f"📍 জেলা: {text}\n📅 তারিখ: {today}\n\n🌅 সেহরি: {fajr}\n🌇 ইফতার: {maghrib}")
     else:
-        await update.message.reply_text("⚠️ জেলাটি তালিকায় নেই। নিচের বাটন থেকে জেলা বেছে নিন।")
+        await update.message.reply_text("⚠️ সঠিক জেলার নাম লিখুন বা নিচের বাটন ব্যবহার করুন।")
 
 if __name__ == "__main__":
-    application = ApplicationBuilder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_click))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
-    
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_click))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
     print("Bot is running...")
-    application.run_polling()
-    
+    app.run_polling()
+        
