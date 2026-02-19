@@ -1,77 +1,51 @@
-import os
-import pytz
-import datetime
+import telebot
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, CallbackQueryHandler, filters
+import google.generativeai as genai
 
-TOKEN = os.getenv("BOT_TOKEN")  # Env variable
+# আপনার তথ্যসমূহ
+BOT_TOKEN = "8331922661:AAFUePbGdJk-X07wk4QiOninnAmf_Cea_O4"
+GEMINI_API_KEY = "AIzaSyAfZ0klixqrTGD0yaDHEN-iG386G8i--PU"
 
-districts = {
-    "ঢাকা":"Dhaka","খুলনা":"Khulna","চট্টগ্রাম":"Chittagong","রাজশাহী":"Rajshahi",
-    "সিলেট":"Sylhet","বরিশাল":"Barisal","রংপুর":"Rangpur","ময়মনসিংহ":"Mymensingh",
-    "কক্সবাজার":"Cox's Bazar","বাগেরহাট":"Bagerhat","সাতক্ষীরা":"Satkhira","যশোর":"Jessore"
-}
+bot = telebot.TeleBot(BOT_TOKEN)
 
-def get_buttons():
-    buttons = []
-    for d in districts.keys():
-        buttons.append([InlineKeyboardButton(d, callback_data=d)])
-    return buttons
+# AI সেটআপ
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-pro')
 
-def get_times(city):
-    url = f"https://api.aladhan.com/v1/timingsByCity?city={city}&country=Bangladesh&method=1"
-    r = requests.get(url).json()
-    fajr = r["data"]["timings"]["Fajr"]
-    maghrib = r["data"]["timings"]["Maghrib"]
-    return fajr, maghrib
+@bot.message_handler(commands=['start'])
+def start(message):
+    hadiyth = "✨ রাসূলুল্লাহ (সাঃ) বলেছেন: 'যে ব্যক্তি সওয়াবের আশায় রমজানের রোজা রাখবে, তার পূর্ববর্তী সকল গুনাহ ক্ষমা করা হবে।'"
+    welcome_text = (
+        f"{hadiyth}\n\n"
+        "📍 সময় জানতে জেলার নাম লিখুন (যেমন: ঢাকা)\n"
+        "🤖 যেকোনো ইসলামিক প্রশ্ন করতে পারেন!\n\n"
+        "👨‍💻 উৎপাদক: @Md_atiqul_islam0"
+    )
+    bot.reply_to(message, welcome_text)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = InlineKeyboardMarkup(get_buttons())
-    await update.message.reply_text("🌙 রমজান মোবারক! জেলা বেছে নিন:", reply_markup=kb)
+@bot.message_handler(func=lambda message: True)
+def handle_all(message):
+    user_text = message.text.strip()
+    
+    # জেলা চেক করার জন্য API
+    api_url = f"https://bd-ramadan-api.vercel.app/api/{user_text}"
+    try:
+        response = requests.get(api_url)
+        if response.status_code == 200:
+            data = response.json()
+            reply = (f"📍 জেলা: {user_text}\n"
+                     f"📅 তারিখ: {data['date']}\n"
+                     f"⏳ সেহরির শেষ সময়: {data['sehri']}\n"
+                     f"🍎 ইফতারের সময়: {data['iftar']}\n\n"
+                     f"👨‍💻 উৎপাদক: @Md_atiqul_islam0")
+            bot.reply_to(message, reply)
+        else:
+            # যদি জেলা না হয়, তবে AI (জেমিনি) উত্তর দিবে
+            prompt = f"You are a polite Islamic Assistant. Answer in Bengali only. Stay respectful. User asked: {user_text}"
+            ai_res = model.generate_content(prompt)
+            # এআই উত্তরের নিচেও আপনার নাম থাকবে
+            bot.reply_to(message, f"{ai_res.text}\n\n👨‍💻 উৎপাদক: @Md_atiqul_islam0")
+    except Exception as e:
+        bot.reply_to(message, "⚠️ দুঃখিত, আমি ঠিক বুঝতে পারিনি। জেলা বা সঠিক প্রশ্ন লিখুন।\n\n👨‍💻 উৎপাদক: @Md_atiqul_islam0")
 
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    district = query.data
-    city = districts[district]
-    fajr, maghrib = get_times(city)
-    tz = pytz.timezone("Asia/Dhaka")
-    today = datetime.datetime.now(tz).strftime("%d-%m-%Y")
-    msg = f"""
-📍 জেলা: {district}
-📅 তারিখ: {today}
-
-🌙 সেহরির শেষ সময়: {fajr}
-🍽️ ইফতার সময়: {maghrib}
-
-উৎপাদক: @Md_atiqul_islam0
-"""
-    await query.edit_message_text(msg)
-
-async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text in districts:
-        city = districts[text]
-        fajr, maghrib = get_times(city)
-        tz = pytz.timezone("Asia/Dhaka")
-        today = datetime.datetime.now(tz).strftime("%d-%m-%Y")
-        msg = f"""
-📍 জেলা: {text}
-📅 তারিখ: {today}
-
-🌙 সেহরির শেষ সময়: {fajr}
-🍽️ ইফতার সময়: {maghrib}
-
-উৎপাদক: @Md_atiqul_islam0
-"""
-        await update.message.reply_text(msg)
-    else:
-        await update.message.reply_text("⚠️ জেলা লিখুন বা বাটন ব্যবহার করুন।")
-
-from telegram.ext import CommandHandler
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(button_click))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
-app.run_polling()
+bot.polling()
