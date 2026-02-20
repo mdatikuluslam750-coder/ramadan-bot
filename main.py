@@ -1,77 +1,90 @@
-import os
-import pytz
-import datetime
+import telebot
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, CallbackQueryHandler, filters, CommandHandler
+import google.generativeai as genai
+import os
+from flask import Flask
+from threading import Thread
 
-# আপনার দেওয়া নতুন টোকেন
-TOKEN = "8331922661:AAHsxItKbrKIKKv_bpdOqtgmClGLx2H02uw"
+# আপনার দেওয়া নতুন তথ্যসমূহ
+BOT_TOKEN = "8331922661:AAFZoxvctIg4jm2uX9DMAe5ME2ziCnKgjVs"
+GEMINI_API_KEY = "AIzaSyAfZ0klixqrTGD0yaDHEN-iG386G8i--PU" # আপনার আগের এপিআই কি-টি এখানে কাজ করবে
 
-districts = {
-    "ঢাকা": "Dhaka", "চট্টগ্রাম": "Chittagong", "রাজশাহী": "Rajshahi", "খুলনা": "Khulna", 
-    "সিলেট": "Sylhet", "বরিশাল": "Barisal", "রংপুর": "Rangpur", "ময়মনসিংহ": "Mymensingh",
-    "কুমিল্লা": "Comilla", "ফেনী": "Feni", "ব্রাহ্মণবাড়িয়া": "Brahmanbaria", "নোয়াখালী": "Noakhali",
-    "চাঁদপুর": "Chandpur", "লক্ষ্মীপুর": "Lakshmipur", "কক্সবাজার": "Cox's Bazar", "খাগড়াছড়ি": "Khagrachhari",
-    "রাঙ্গামাটি": "Rangamati", "বান্দরবান": "Bandarban", "সিরাজগঞ্জ": "Sirajganj", "পাবনা": "Pabna",
-    "বগুড়া": "Bogra", "নাটোর": "Natore", "জয়পুরহাট": "Joypurhat", "চাঁপাইনবাবগঞ্জ": "Chapainawabganj",
-    "নওগাঁ": "Naogaon", "যশোর": "Jessore", "সাতক্ষীরা": "Satkhira", "মেহেরপুর": "Meherpur",
-    "নড়াইল": "Narail", "চুয়াডাঙ্গা": "Chuadanga", "কুষ্টিয়া": "Kushtia", "মাগুরা": "Magura",
-    "বাগেরহাট": "Bagerhat", "ঝিনাইদহ": "Jhenaidah", "ঝালকাঠি": "Jhalokati", "পটুয়াখালী": "Patuakhali",
-    "পিরোজপুর": "Pirojpur", "ভোলা": "Bhola", "বরগুনা": "Barguna", "পঞ্চগড়": "Panchagarh",
-    "দিনাজপুর": "Dinajpur", "লালমনিরহাট": "Lalmonirhat", "নীলফামারী": "Nilphamari", "কুড়িগ্রাম": "Kurigram",
-    "ঠাকুরগাঁও": "Thakurgaon", "গাইবান্ধা": "Gaibandha", "শেরপুর": "Sherpur", "জামালপুর": "Jamalpur",
-    "নেত্রকোনা": "Netrokona", "কিশোরগঞ্জ": "Kishoreganj", "সুনামগঞ্জ": "Sunamganj", "হবিগঞ্জ": "Habiganj",
-    "মৌলভীবাজার": "Moulvibazar", "গোপালগঞ্জ": "Gopalganj", "মাদারীপুর": "Madaripur", "শরীয়তপুর": "Shariatpur",
-    "রাজবাড়ী": "Rajbari", "ফরিদপুর": "Faridpur", "টাঙ্গাইল": "Tangail", "মানিকগঞ্জ": "Manikganj",
-    "মুন্সীগঞ্জ": "Munshiganj", "নরসিংদী": "Narsingdi", "নারায়ণগঞ্জ": "Narayanganj", "গাজীপুর": "Gazipur"
-}
+bot = telebot.TeleBot(BOT_TOKEN)
 
-def get_buttons():
-    buttons = []
-    keys = list(districts.keys())
-    for i in range(0, len(keys), 3):
-        row = [InlineKeyboardButton(keys[j], callback_data=keys[j]) for j in range(i, min(i+3, len(keys)))]
-        buttons.append(row)
-    return buttons
+# AI সেটআপ (নিরাপত্তা ও ইসলামিক নির্দেশনাসহ)
+genai.configure(api_key=GEMINI_API_KEY)
 
-def get_times(city):
+# সেফটি সেটিংস: অশ্লীল বা বাজে উত্তর বন্ধ করার জন্য
+safety_settings = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_LOW_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_LOW_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_LOW_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_LOW_AND_ABOVE"},
+]
+
+model = genai.GenerativeModel(
+    model_name="gemini-pro",
+    safety_settings=safety_settings
+)
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    welcome_text = (
+        "✨ আসসালামু আলাইকুম!\n\n"
+        "🌙 রমজানুল মোবারক। এই বটটি আপনার ইসলামিক সহযোগী।\n\n"
+        "📍 সেহরি ও ইফতারের সময় জানতে আপনার জেলার নাম ইংরেজিতে লিখুন (যেমন: Dhaka, Bogura)।\n"
+        "🤖 যেকোনো ইসলামিক প্রশ্ন বা মাসলা-মাসায়েল জিজ্ঞেস করতে পারেন।\n"
+        "⏰ সেহরি ও ইফতারের জন্য এটি আপনাকে সঠিক তথ্য দিয়ে সাহায্য করবে।\n\n"
+        "👨‍💻 উৎপাদক: @Md_atiqul_islam0"
+    )
+    bot.reply_to(message, welcome_text)
+
+@bot.message_handler(func=lambda message: True)
+def handle_all(message):
+    user_text = message.text.strip().lower()
+    
+    # ১. প্রথমে জেলা চেক করা (৬৪ জেলার ইফতার-সেহরির সময়ের জন্য API)
+    api_url = f"https://bd-ramadan-api.vercel.app/api/{user_text}"
     try:
-        url = f"https://api.aladhan.com/v1/timingsByCity?city={city}&country=Bangladesh&method=1"
-        r = requests.get(url).json()
-        return r["data"]["timings"]["Fajr"], r["data"]["timings"]["Maghrib"]
+        response = requests.get(api_url)
+        if response.status_code == 200:
+            data = response.json()
+            reply = (f"📍 জেলা: {user_text.capitalize()}\n"
+                     f"📅 তারিখ: {data['date']}\n"
+                     f"⏳ সেহরির শেষ সময়: {data['sehri']}\n"
+                     f"🍎 ইফতারের সময়: {data['iftar']}\n\n"
+                     "📢 সময়মতো সেহরি ও ইফতার করুন।\n"
+                     "👨‍💻 উৎপাদক: @Md_atiqul_islam0")
+            bot.reply_to(message, reply)
+            return
     except:
-        return "N/A", "N/A"
+        pass
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = InlineKeyboardMarkup(get_buttons())
-    await update.message.reply_text("🌙 আসসালামু আলাইকুম! ইফতার ও সেহরির সময় জানতে আপনার জেলা বেছে নিন:", reply_markup=kb)
+    # ২. জেলা না হলে AI এর মাধ্যমে ইসলামিক উত্তর দেওয়া
+    try:
+        # AI-কে কড়া নির্দেশ: শুধুমাত্র ইসলামিক, রমজান বিষয়ক এবং শালীন উত্তর দিবে
+        prompt = (f"You are a strict Islamic Assistant for the month of Ramadan. "
+                  f"Answer only Islamic, Quran, Hadith, and Ramadan related questions in Bengali. "
+                  f"Strictly refuse to answer any vulgar, sexual, offensive, or inappropriate questions. "
+                  f"If someone asks something bad, say: 'দুঃখিত, আমি কেবল ইসলামিক ও রমজান বিষয়ক প্রশ্নের উত্তর দিই।' "
+                  f"User question: {user_text}")
+        
+        ai_res = model.generate_content(prompt)
+        bot.reply_to(message, f"{ai_res.text}\n\n👨‍💻 উৎপাদক: @Md_atiqul_islam0")
+    except Exception:
+        bot.reply_to(message, "⚠️ দুঃখিত, আমি এই প্রশ্নের উত্তর দিতে পারছি না। দয়া করে মার্জিত ও ইসলামিক প্রশ্ন করুন।")
 
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    district = query.data
-    fajr, maghrib = get_times(districts[district])
-    tz = pytz.timezone("Asia/Dhaka")
-    today = datetime.datetime.now(tz).strftime("%d-%m-%Y")
-    msg = f"📍 জেলা: {district}\n📅 তারিখ: {today}\n\n🌅 সেহরির শেষ সময়: {fajr}\n🌇 ইফতার সময়: {maghrib}\n\nউৎপাদক: @Md_atiqul_islam0"
-    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(get_buttons()))
+# Render এর পোর্ট সমস্যা সমাধানের জন্য Flask সার্ভার
+app = Flask(__name__)
+@app.route('/')
+def index(): return "Islamic Ramadan Bot is Active!"
 
-async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text in districts:
-        fajr, maghrib = get_times(districts[text])
-        tz = pytz.timezone("Asia/Dhaka")
-        today = datetime.datetime.now(tz).strftime("%d-%m-%Y")
-        await update.message.reply_text(f"📍 জেলা: {text}\n📅 তারিখ: {today}\n\n🌅 সেহরি: {fajr}\n🌇 ইফতার: {maghrib}")
-    else:
-        await update.message.reply_text("⚠️ সঠিক জেলার নাম লিখুন বা নিচের বাটন ব্যবহার করুন।")
+def run():
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_click))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_msg))
-    print("Bot is running...")
-    app.run_polling()
-        
+    # ফোন বা সার্ভারে সেহরির সময় অ্যালার্ম ফিট করার জন্য নির্দেশনা মনে করিয়ে দেওয়া
+    print("Bot is starting...")
+    Thread(target=run).start()
+    bot.infinity_polling()
+    
